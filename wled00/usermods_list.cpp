@@ -80,6 +80,10 @@
 #include "../usermods/VL53L0X_gestures/usermod_vl53l0x_gestures.h"
 #endif
 
+#ifdef USERMOD_VL53L0X_MQTT
+#include "../usermods/VL53L0X_mqtt/usermod_vl53l0x_mqtt.h"
+#endif
+
 #ifdef USERMOD_ANIMATED_STAIRCASE
   #include "../usermods/Animated_Staircase/Animated_Staircase.h"
 #endif
@@ -245,6 +249,10 @@ void registerUsermods()
   usermods.add(new UsermodVL53L0XGestures());
   #endif
   
+    #ifdef USERMOD_VL53L0X_MQTT
+  usermods.add(new UsermodVL53L0XMQTT());
+  #endif
+
   #ifdef USERMOD_ANIMATED_STAIRCASE
   usermods.add(new Animated_Staircase());
   #endif
