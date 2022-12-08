@@ -20,20 +20,8 @@
 #include <Wire.h>
 #include <VL53L0X.h>
 
-#ifndef VL53L0X_MAX_RANGE_MM
-#define VL53L0X_MAX_RANGE_MM 230 // max height in millimeters to react for motions
-#endif
-
-#ifndef VL53L0X_MIN_RANGE_OFFSET
-#define VL53L0X_MIN_RANGE_OFFSET 60 // minimal range in millimeters that sensor can detect. Used in long motions to correct brightness calculation.
-#endif
-
 #ifndef VL53L0X_DELAY_MS
 #define VL53L0X_DELAY_MS 500 // how often to get data from sensor
-#endif
-
-#ifndef VL53L0X_LONG_MOTION_DELAY_MS
-#define VL53L0X_LONG_MOTION_DELAY_MS 1000 // switch onto "long motion" action after this delay
 #endif
 
 class UsermodVL53L0XMQTT : public Usermod {
@@ -43,11 +31,14 @@ class UsermodVL53L0XMQTT : public Usermod {
     VL53L0X sensor;
     bool enabled = true;
 
-    bool wasMotionBefore = false;
-    bool isLongMotion = false;
-    unsigned long motionStartTime = 0;
     bool mqttInitialized = false;
     int lastRange = 0;
+    
+    unsigned long readingInterval = VL53L0X_DELAY_MS;
+    bool automaticallyToggleLights = false;
+    int distanceToToggle = 0;
+    int secondsToKeepOnFor = 30;
+    uint32_t offTimerStart = 0;
 
   public:
 
@@ -65,32 +56,51 @@ class UsermodVL53L0XMQTT : public Usermod {
       }
     }
 
+    /**
+     * switch off the strip if the delay has elapsed 
+     */
+    bool handleOffTimer() {
+      if (offTimerStart > 0 && millis() - offTimerStart > secondsToKeepOnFor * 1000) {
+        offTimerStart = 0;
+        shortPressAction();
+        return true;
+      }
+      return false;
+    }
+
+
     void loop() {
       if (!enabled || strip.isUpdating()) return;
-      if (millis() - lastTime > VL53L0X_DELAY_MS)
-      {
+      if (millis() - lastTime > readingInterval) {
         lastTime = millis();
 
         int range = sensor.readRangeSingleMillimeters();
         DEBUG_PRINTF("range: %d, brightness: %d\r\n", range, bri);
 
-        // if (WLED_MQTT_CONNECTED){
-        //   mqtt->publish(subuf, 0, true, String(range).c_str());
-        // }
         int currentRange = range / 10;
-        if (!between(currentRange, lastRange - 1, lastRange + 1) && WLED_MQTT_CONNECTED)
-        {
-          if (!mqttInitialized)
-            {
+        if (!between(currentRange, lastRange - 1, lastRange + 1)) {
+          if(automaticallyToggleLights) {
+            if (range < distanceToToggle) {
+              offTimerStart = millis();
+              if(bri == 0)
+                shortPressAction();
+            }
+          }
+
+          if (WLED_MQTT_CONNECTED) {
+            if (!mqttInitialized) {
               _mqttInitialize();
               mqttInitialized = true;
             }
-          char subuf[64];
-          strcpy(subuf, mqttDeviceTopic);
-          strcat_P(subuf, PSTR("/VL53L0X/distance"));
-          mqtt->publish(subuf, 0, true, String(range).c_str());
+            char subuf[64];
+            strcpy(subuf, mqttDeviceTopic);
+            strcat_P(subuf, PSTR("/VL53L0X/distance"));
+            mqtt->publish(subuf, 0, true, String(range).c_str());
+          }
+          
         }
-        lastRange = currentRange;//range / 25.4;
+        handleOffTimer();
+        lastRange = currentRange;
       }
     }
     
@@ -139,6 +149,46 @@ class UsermodVL53L0XMQTT : public Usermod {
       mqtt->publish(t.c_str(), 0, true, temp.c_str());
     }
     
+  /**
+   * addToConfig() (called from set.cpp) stores persistent properties to cfg.json
+  */
+  void addToConfig(JsonObject &root)
+  {
+    // we add JSON object.
+    JsonObject top = root.createNestedObject(FPSTR("vl53l0x-mqtt")); // usermodname
+    top[FPSTR("read-interval-ms")] = readingInterval;
+    top[FPSTR("automatically-toggle-lgihts")] = automaticallyToggleLights;
+    top[FPSTR("distance-to-toggle")] = distanceToToggle;
+    top[FPSTR("seconds-to-keep-on-for")] = secondsToKeepOnFor;
+
+    DEBUG_PRINTLN(F("config saved."));
+  }
+
+  /**
+  * readFromConfig() is called before setup() to populate properties from values stored in cfg.json
+  */
+  bool readFromConfig(JsonObject &root)
+  {
+    // we look for JSON object.
+    JsonObject top = root[FPSTR("vl53l0x-mqtt")];
+    if (top.isNull()) {
+      DEBUG_PRINT(FPSTR("vl53l0x-mqtt"));
+      DEBUG_PRINTLN(F(": No config found. (Using defaults.)"));
+      return false;
+    }
+
+    readingInterval  = (top[FPSTR("read-interval-ms")] | readingInterval);
+    automaticallyToggleLights  = (top[FPSTR("automatically-toggle-lgihts")] | automaticallyToggleLights);
+    distanceToToggle  = (top[FPSTR("distance-to-toggle")] | distanceToToggle);
+    secondsToKeepOnFor  = (top[FPSTR("seconds-to-keep-on-for")] | secondsToKeepOnFor);
+    
+    DEBUG_PRINT(FPSTR("vl53l0x-mqtt"));
+    DEBUG_PRINTLN(F(" config (re)loaded."));
+
+    return !top["seconds-to-keep-on-for"].isNull(); //" when updating Usermod with new features
+    //return true;
+  }
+
     /*
      * getId() allows you to optionally give your V2 usermod an unique ID (please define it in const.h!).
      * This could be used in the future for the system to determine whether your usermod is installed.

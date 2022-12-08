@@ -116,7 +116,6 @@ class UsermodVL53L0XGestures : public Usermod {
 //    {
 //      JsonObject top = root.createNestedObject("VL53L0x");
 //      JsonArray pins = top.createNestedArray("pin");
-//      pins.add(i2c_scl);
 //      pins.add(i2c_sda);
 //    }
 
